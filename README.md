@@ -1,6 +1,6 @@
 # Varyn
 
-Varyn is a vulkan-based modular live shader coding tool. You can attach modules to each other and organize your shaders much better than a single file.
+Varyn is a vulkan-based modular live shader coding tool. You can attach modules to each other and organize your shaders much better than a single file. The tool was completely made using Claude Code along with my edits here and there.
 
 ## Modularity
 
