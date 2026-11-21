@@ -50,7 +50,7 @@ bool supportsRequiredFeatures(VkPhysicalDevice device) {
     VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     features.pNext = &features13;
     vkGetPhysicalDeviceFeatures2(device, &features);
-    return features13.dynamicRendering && features13.synchronization2;
+    return features13.dynamicRendering && features13.synchronization2 && features.features.imageCubeArray;
 }
 
 // Returns a queue family that can both draw and present, or -1.
@@ -185,10 +185,15 @@ void VulkanContext::createDevice() {
     features13.dynamicRendering = VK_TRUE;
     features13.synchronization2 = VK_TRUE;
 
+    // Cube map arrays hold the environment maps used for metallic reflections.
+    VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features.pNext = &features13;
+    features.features.imageCubeArray = VK_TRUE;
+
     const char* extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
     VkDeviceCreateInfo createInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    createInfo.pNext = &features13;
+    createInfo.pNext = &features;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueInfo;
     createInfo.enabledExtensionCount = 1;

@@ -1,6 +1,7 @@
 #version 450
 // Default fragment shader: every instance gets its own colour from the
-// palette, lit by the light direction defined in the config.
+// palette, lit by the light direction defined in the config. Models with a
+// `metallic` option also reflect the scene around them.
 
 #include <varyn.glsl>
 #include "surface.glsl"
@@ -13,6 +14,6 @@ void main() {
     vec3 albedo = palette(float(instanceIndex) * 0.08 + time * 0.1) * tint;
     albedo = mix(albedo, vec3(1.0), pulse * 0.25);
 
-    vec3 color = shade(albedo, vWorldPosition, vNormal, lightDirection);
+    vec3 color = shadeMetallic(albedo, vWorldPosition, vNormal, lightDirection, metallic);
     outColor = vec4(toneMap(color * 1.6), 1.0);
 }

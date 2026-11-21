@@ -90,14 +90,15 @@ Buffer createDeviceLocalBuffer(const VulkanContext& context, const void* data, V
 // ---------------------------------------------------------------------------
 
 Image::Image(const VulkanContext& context, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-             VkImageAspectFlags aspect)
+             VkImageAspectFlags aspect, uint32_t arrayLayers, VkImageCreateFlags flags, VkImageViewType viewType)
     : device_(context.device()), format_(format) {
     VkImageCreateInfo createInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    createInfo.flags = flags;
     createInfo.imageType = VK_IMAGE_TYPE_2D;
     createInfo.format = format;
     createInfo.extent = {extent.width, extent.height, 1};
     createInfo.mipLevels = 1;
-    createInfo.arrayLayers = 1;
+    createInfo.arrayLayers = arrayLayers;
     createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     createInfo.usage = usage;
@@ -112,9 +113,9 @@ Image::Image(const VulkanContext& context, VkExtent2D extent, VkFormat format, V
 
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = image_;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType = viewType;
     viewInfo.format = format;
-    viewInfo.subresourceRange = {aspect, 0, 1, 0, 1};
+    viewInfo.subresourceRange = {aspect, 0, 1, 0, arrayLayers};
     VK_CHECK(vkCreateImageView(device_, &viewInfo, nullptr, &view_));
 }
 
@@ -230,7 +231,7 @@ void transitionImage(VkCommandBuffer commands, VkImage image, VkImageAspectFlags
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
-    barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+    barrier.subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
 
     VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dependency.imageMemoryBarrierCount = 1;

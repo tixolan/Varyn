@@ -174,21 +174,39 @@ TextureConfig readTexture(const toml::table& table, const std::string& where, co
     return texture;
 }
 
-InstanceConfig readInstance(const toml::table& table, const std::string& where) {
+// Like readVector<3>, but a string naming a 3-component uniform reuses that
+// uniform's expressions.
+Vec3Expression readInstanceVector(const toml::node& node, const std::string& where,
+                                  const std::vector<UniformConfig>& uniforms) {
+    if (auto text = node.value<std::string>()) {
+        for (const UniformConfig& uniform : uniforms) {
+            if (uniform.name != *text) continue;
+            if (uniform.components.size() != 3) {
+                fail(where, "uniform '" + uniform.name + "' has " + std::to_string(uniform.components.size()) +
+                                " components, expected 3");
+            }
+            return {uniform.components[0], uniform.components[1], uniform.components[2]};
+        }
+    }
+    return readVector<3>(node, where);
+}
+
+InstanceConfig readInstance(const toml::table& table, const std::string& where,
+                            const std::vector<UniformConfig>& uniforms) {
     warnAboutUnknownKeys(table, where, {"count", "position", "rotation", "scale"});
 
     InstanceConfig instance;
     instance.count = table["count"].value_or(1);
     if (instance.count < 0) fail(where + ".count", "must not be negative");
-    if (auto node = table.get("position")) instance.position = readVector<3>(*node, where + ".position");
-    if (auto node = table.get("rotation")) instance.rotation = readVector<3>(*node, where + ".rotation");
-    if (auto node = table.get("scale")) instance.scale = readVector<3>(*node, where + ".scale");
+    if (auto node = table.get("position")) instance.position = readInstanceVector(*node, where + ".position", uniforms);
+    if (auto node = table.get("rotation")) instance.rotation = readInstanceVector(*node, where + ".rotation", uniforms);
+    if (auto node = table.get("scale")) instance.scale = readInstanceVector(*node, where + ".scale", uniforms);
     return instance;
 }
 
 ModelConfig readModel(const toml::table& table, const std::string& where, const fs::path& base,
-                      const ShaderPair& defaultShaders) {
-    warnAboutUnknownKeys(table, where, {"name", "path", "builtin", "vertex", "fragment", "instances"});
+                      const ShaderPair& defaultShaders, const std::vector<UniformConfig>& uniforms) {
+    warnAboutUnknownKeys(table, where, {"name", "path", "builtin", "vertex", "fragment", "metallic", "instances", "passes"});
 
     ModelConfig model;
     model.name = table["name"].value_or(where);
@@ -202,10 +220,27 @@ ModelConfig readModel(const toml::table& table, const std::string& where, const 
     if (auto node = table.get("vertex")) model.shaders.vertex = readPath(*node, where + ".vertex", base);
     if (auto node = table.get("fragment")) model.shaders.fragment = readPath(*node, where + ".fragment", base);
 
+    if (auto node = table.get("metallic")) {
+        model.metallic = readExpression(*node, where + ".metallic");
+        if (model.metallic->isConstant()) {
+            double value = model.metallic->evaluate({});
+            if (value < 0.0 || value > 1.0) fail(where + ".metallic", "must be between 0.0 and 1.0");
+            if (value == 0.0) model.metallic.reset();  // no environment map needed
+        }
+    }
+
     forEachTable(table.get("instances"), where + ".instances", [&](const toml::table& item, const std::string& itemWhere) {
-        model.instances.push_back(readInstance(item, itemWhere));
+        model.instances.push_back(readInstance(item, itemWhere, uniforms));
     });
     if (model.instances.empty()) model.instances.emplace_back();  // one instance at the origin
+
+    forEachTable(table.get("passes"), where + ".passes", [&](const toml::table& item, const std::string& itemWhere) {
+        warnAboutUnknownKeys(item, itemWhere, {"vertex", "fragment"});
+        ShaderPair pass = model.shaders;  // each stage defaults to the model's own
+        if (auto node = item.get("vertex")) pass.vertex = readPath(*node, itemWhere + ".vertex", base);
+        if (auto node = item.get("fragment")) pass.fragment = readPath(*node, itemWhere + ".fragment", base);
+        model.extraPasses.push_back(std::move(pass));
+    });
     return model;
 }
 
@@ -217,13 +252,24 @@ void readUniforms(const toml::table& table, std::vector<UniformConfig>& uniforms
         uniform.name = std::string(key.str());
         if (!isIdentifier(uniform.name)) fail(where, "not a valid GLSL identifier");
 
-        if (const toml::array* array = value.as_array()) {
+        // An array uniform: [uniforms.name] with `count` and `value`.
+        const toml::node* valueNode = &value;
+        if (const toml::table* arrayTable = value.as_table()) {
+            warnAboutUnknownKeys(*arrayTable, where, {"count", "value"});
+            uniform.count = (*arrayTable)["count"].value_or(0);
+            if (uniform.count < 1) fail(where + ".count", "must be at least 1");
+            valueNode = arrayTable->get("value");
+            if (!valueNode) fail(where, "missing 'value'");
+            where += ".value";
+        }
+
+        if (const toml::array* array = valueNode->as_array()) {
             if (array->empty() || array->size() > 4) fail(where, "arrays must have 1 to 4 components");
             for (size_t i = 0; i < array->size(); ++i) {
                 uniform.components.push_back(readExpression(*array->get(i), where + "[" + std::to_string(i) + "]"));
             }
         } else {
-            uniform.components.push_back(readExpression(value, where));
+            uniform.components.push_back(readExpression(*valueNode, where));
         }
         uniforms.push_back(std::move(uniform));
     }
@@ -263,11 +309,12 @@ Config loadConfig(const fs::path& file) {
         config.textures.push_back(readTexture(table, where, base));
     });
 
-    forEachTable(root.get("models"), "models", [&](const toml::table& table, const std::string& where) {
-        config.models.push_back(readModel(table, where, base, config.shaders.defaults));
-    });
-
+    // Uniforms first: instances may refer to them.
     if (const toml::table* table = root["uniforms"].as_table()) readUniforms(*table, config.uniforms);
+
+    forEachTable(root.get("models"), "models", [&](const toml::table& table, const std::string& where) {
+        config.models.push_back(readModel(table, where, base, config.shaders.defaults, config.uniforms));
+    });
 
     // Without any models we draw a single fullscreen quad, which turns Varyn
     // into a classic "fragment shader playground".
@@ -284,8 +331,9 @@ Config loadConfig(const fs::path& file) {
     // must not clash with what the generated varyn.glsl header declares.
     std::set<std::string> names = {"view",       "projection",    "viewProjection", "cameraPosition",
                                    "time",       "resolution",    "deltaTime",      "frame",
-                                   "modelMatrix", "modelIndex",   "instanceIndex",  "inPosition",
-                                   "inNormal",   "inUV"};
+                                   "modelMatrix", "modelIndex",   "instanceIndex",  "metallic",
+                                   "environmentLayer", "varynEnvironment", "sampleEnvironment",
+                                   "inPosition", "inNormal",      "inUV"};
     for (const TextureConfig& texture : config.textures) {
         if (!names.insert(texture.name).second) throw ConfigError("textures: name '" + texture.name + "' is reserved or already used");
     }

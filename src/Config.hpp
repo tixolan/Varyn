@@ -71,13 +71,27 @@ struct ModelConfig {
     std::string builtin;           // ... or one of: quad, cube, sphere
     ShaderPair shaders;            // falls back to ShaderConfig::defaults
     std::vector<InstanceConfig> instances;
+
+    // [[models.passes]]: more shader pairs that draw every instance again,
+    // after `shaders` and in this order (e.g. a projected shadow).
+    std::vector<ShaderPair> extraPasses;
+
+    // 0 = not reflective, 1 = a perfect mirror. May use `i` and `n`. When set,
+    // the renderer captures an environment map around this model every frame.
+    std::optional<Expression> metallic;
 };
 
 // A user defined value exposed to shaders. One to four components map to
 // float, vec2, vec3 or vec4.
+//
+// With `count`, the uniform is an array: element `i` is evaluated with
+// `i` = 0..count-1 and `n` = count, just like instances. An instance's
+// position, rotation or scale may name a 3-component uniform to use the same
+// expressions, so models and shaders can share one definition.
 struct UniformConfig {
     std::string name;
     std::vector<Expression> components;
+    int count = 0;  // 0: a single value, otherwise the array length
 };
 
 struct Config {

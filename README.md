@@ -38,6 +38,14 @@ cmake --build build
 ./build/varyn examples/varyn.toml
 ```
 
+More examples in `examples/`:
+
+| Config            | Shows                                                               |
+| ----------------- | ------------------------------------------------------------------- |
+| `varyn.toml`      | the sample scene: instancing, expressions, textures, metallic models |
+| `mandelbrot.toml` | the same scene on a zooming Mandelbrot floor                        |
+| `juggler.toml`    | a figure made of spheres juggling chrome balls, with cast shadows (`[[models.passes]]`) and shader glints, animated purely with expressions in honor of Eric Graham's 1987 Amiga Juggler Demo |
+
 | Option           | Effect                                                     |
 | ---------------- | ---------------------------------------------------------- |
 | `--validation`   | Enable the Vulkan validation layer                         |
@@ -87,11 +95,16 @@ wrap = "repeat"                      # or "clamp"
 speed = 2.0
 color = [1, "0.5 + 0.5 * sin(time)", 0.2]
 
+[uniforms.orbit]                     # an array: `vec3 orbit[4]` in shaders, element i
+count = 4                            # evaluated with i = 0..count-1 and n = count
+value = ["2 * cos(time + i / n * tau)", 1, "2 * sin(time + i / n * tau)"]
+
 [[models]]
 name = "ship"
 path = "models/ship.obj"             # an .obj file ...
 # builtin = "cube"                   # ... or a builtin: quad, cube, sphere
 # vertex / fragment = "..."          # optional per-model shader override
+metallic = 0.8                       # 0..1, reflects the scene (see below)
 
   [[models.instances]]               # one entry per placement
   position = [0, "sin(time)", 0]
@@ -101,7 +114,22 @@ path = "models/ship.obj"             # an .obj file ...
   [[models.instances]]               # `count` copies, using i = 0..count-1 and n = count
   count = 8
   position = ["3 * cos(i / n * tau)", 0, "3 * sin(i / n * tau)"]
+
+  [[models.instances]]               # position, rotation or scale may name a 3-component
+  count = 4                          # uniform to reuse its expressions, so shaders and
+  position = "orbit"                 # models share one definition
+
+  [[models.passes]]                  # draw every instance again with other shaders,
+  vertex = "shaders/shadow.vert"     # e.g. flattened onto the floor as a shadow;
+  fragment = "shaders/shadow.frag"   # each stage defaults to the model's own
 ```
+
+`metallic` may be an expression and can use `i` / `n`. Every instance of a
+model with this option gets an environment cube map, captured each frame from
+the instance's position with that instance left out (6 extra scene renders per
+instance, 256×256 per face). Shaders read it with `sampleEnvironment()`; the
+example `lighting.glsl` module wraps that in `shadeMetallic()`. Reflective
+instances see each other one frame late.
 
 Without any `[[models]]`, Varyn draws a single fullscreen quad with the default
 shaders, which makes it a classic fragment-shader playground.
@@ -129,6 +157,9 @@ shaders, which makes it a classic fragment-shader playground.
 | `cameraPosition`                           | vec3      |                                         |
 | `modelMatrix`                              | mat4      | per instance (push constant)            |
 | `modelIndex`, `instanceIndex`              | int       | which model / instance is being drawn   |
+| `metallic`                                 | float     | the model's `metallic` option, 0..1     |
+| `sampleEnvironment(dir)`                   | vec3      | fragment only: the scene reflected in   |
+|                                            |           | world direction `dir` (black if none)   |
 | your `[uniforms]` and `[[textures]]`       |           | by the names given in the config        |
 | `inPosition`, `inNormal`, `inUV`           | vertex in | vertex shader only                      |
 

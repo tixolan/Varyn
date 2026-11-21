@@ -38,12 +38,14 @@ private:
 Buffer createDeviceLocalBuffer(const VulkanContext& context, const void* data, VkDeviceSize size,
                                VkBufferUsageFlags usage);
 
-// A 2D VkImage with memory and a view. Move-only.
+// A 2D VkImage (optionally with several array layers) with memory and a
+// view covering every layer. Move-only.
 class Image {
 public:
     Image() = default;
     Image(const VulkanContext& context, VkExtent2D extent, VkFormat format, VkImageUsageFlags usage,
-          VkImageAspectFlags aspect);
+          VkImageAspectFlags aspect, uint32_t arrayLayers = 1, VkImageCreateFlags flags = 0,
+          VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
     ~Image();
 
     Image(Image&& other) noexcept;
@@ -80,7 +82,8 @@ struct Texture {
 // Loads a PNG/JPG/TGA/BMP/... file into a texture (RGBA8).
 Texture loadTexture(const VulkanContext& context, const char* path, bool linearFilter, bool repeat);
 
-// Records a pipeline barrier that moves `image` from one layout to another.
+// Records a pipeline barrier that moves `image` (every mip level and array
+// layer) from one layout to another.
 struct ImageTransition {
     VkImageLayout oldLayout;
     VkImageLayout newLayout;

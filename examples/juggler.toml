@@ -1,0 +1,267 @@
+# =============================================================================
+# Varyn example: a juggler
+#
+#   ./build/varyn examples/juggler.toml
+#
+# A tribute to Eric Graham's 1986 ray-traced Amiga "Juggler". The figure, its
+# colours, the lamp, the camera and the sky and floor colours come from
+# robot.dat, the scene file of his 1987 raytracer, recovered by AlphaPixel and
+# released into the public domain with attribution:
+#   https://github.com/AlphaPixel/Eric-Graham-1987-Juggler-Raytracer-1.0
+# The file holds one still pose. Its coordinates are z-up; here
+# (x, y, z) -> (-y, z, -x) / 3, so the figure faces +Z and is 2.2 m tall.
+# Each `count` chain below is one of its interpolated sphere segments.
+#
+# The motion is this example's own, all done with expressions:
+#   time * 10.472                           one hand circle per catch (every 0.6 s)
+#   -0.025 * (0.5 + 0.5 * cos(time * 10.472))   the knee dip, everything above the feet
+#   0.035 * sin(time * 5.236)               the sway from side to side, one swing per two catches
+#   (i + 1) / n                             position along a chain of n spheres
+# =============================================================================
+
+[window]
+title = "Varyn juggler"
+width = 1280
+height = 800   # the original's 320x200 shape
+vsync = false
+clear_color = [0.7, 0.7, 1.0, 1.0]
+
+[shaders]
+vertex = "shaders/scene.vert"
+fragment = "shaders/juggler/skin.frag"
+include_dirs = ["modules"]
+
+# The original observer and viewing angles.
+[camera]
+position = [1.3333, 1.8333, 3.3333]
+target = [0.154, 1.225, 0.094]
+up = [0.0, 1.0, 0.0]
+fov = 44   # the file gives a focal scale, not an angle: chosen to frame the whole juggle
+near = 0.05
+far = 300.0
+
+[uniforms]
+lightDirection = [-16.6667, 50, 33.3333]   # towards the original lamp
+
+# -----------------------------------------------------------------------------
+# The three mirror balls fly in a shower: a high arc from the right hand
+# (x = 0.64) to the left one in 1.2 s, then a low pass back in 0.6 s that
+# swings forward around his chest. The paths only meet in the hands, so the
+# balls never touch. Ball i of n:
+#   u = fract(time / 1.8 + i / n)   position in the 1.8 s loop, a third apart
+#   a = step(0.6667, u)             0 during the arc, 1 during the pass
+#   s = 0..1 through the current arc or pass
+# The arc peaks 0.7 m above the hands, the pass 0.12 m.
+#
+# `vec3 balls[3]` in shaders (the body shader uses it for the ball shadows);
+# the ball model below uses it as its instance positions.
+# -----------------------------------------------------------------------------
+[uniforms.balls]
+count = 3
+value = [
+  "(1 - 2 * step(0.6667, fract(time / 1.8 + i / n))) * (0.64 - 1.28 * ((1 - step(0.6667, fract(time / 1.8 + i / n))) * 1.5 * fract(time / 1.8 + i / n) + step(0.6667, fract(time / 1.8 + i / n)) * 3 * (fract(time / 1.8 + i / n) - 0.6667)))",
+  "1.62 + 4 * (0.7 - 0.58 * step(0.6667, fract(time / 1.8 + i / n))) * ((1 - step(0.6667, fract(time / 1.8 + i / n))) * 1.5 * fract(time / 1.8 + i / n) + step(0.6667, fract(time / 1.8 + i / n)) * 3 * (fract(time / 1.8 + i / n) - 0.6667)) * (1 - ((1 - step(0.6667, fract(time / 1.8 + i / n))) * 1.5 * fract(time / 1.8 + i / n) + step(0.6667, fract(time / 1.8 + i / n)) * 3 * (fract(time / 1.8 + i / n) - 0.6667)))",
+  "0.36 + 0.25 * step(0.6667, fract(time / 1.8 + i / n)) * sin(3.1416 * ((1 - step(0.6667, fract(time / 1.8 + i / n))) * 1.5 * fract(time / 1.8 + i / n) + step(0.6667, fract(time / 1.8 + i / n)) * 3 * (fract(time / 1.8 + i / n) - 0.6667)))",
+]
+
+# -----------------------------------------------------------------------------
+# The world
+# -----------------------------------------------------------------------------
+
+[[models]]
+name = "sky"
+builtin = "sphere"
+fragment = "shaders/juggler/sky.frag"
+
+  [[models.instances]]
+  scale = 90.0
+
+[[models]]
+name = "floor"
+builtin = "quad"
+fragment = "shaders/juggler/floor.frag"
+
+  [[models.instances]]
+  rotation = [-90.0, 0.0, 0.0]
+  scale = 85.0
+
+# -----------------------------------------------------------------------------
+# The balls. Metallic models get one reflection per instance, so each ball
+# also reflects the other two.
+# -----------------------------------------------------------------------------
+[[models]]
+name = "balls"
+builtin = "sphere"
+fragment = "shaders/juggler/mirror.frag"
+metallic = 1.0
+
+  [[models.instances]]
+  count = 3
+  position = "balls"   # the uniform above, with the same i and n
+  scale = 0.2          # kBallRadius in shaders/juggler/juggler.glsl
+
+  [[models.passes]]   # cast a shadow on the floor
+  vertex = "shaders/juggler/shadow.vert"
+  fragment = "shaders/juggler/shadow.frag"
+
+# -----------------------------------------------------------------------------
+# The juggler (robot.dat objects 4-13). Points above the feet sway and dip;
+# the knees move half as much; the feet stay put; the hands follow the balls.
+# -----------------------------------------------------------------------------
+
+[[models]]
+name = "skin"
+builtin = "sphere"
+fragment = "shaders/juggler/skin.frag"
+
+  [[models.instances]]   # head
+  position = ["0 + 0.035 * sin(time * 5.236)", "2.0333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.1667
+
+  [[models.instances]]   # neck
+  position = ["0 + 0.035 * sin(time * 5.236)", "1.8333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.0667
+
+  [[models.instances]]   # left leg, forward: hip
+  position = ["-0.2 + 0.035 * sin(time * 5.236)", "0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.0667
+
+  [[models.instances]]   # left leg, forward: thigh down to the knee
+  count = 7
+  position = [
+    "-0.2 + 0.035 * sin(time * 5.236) + (-0.2 + 0.5 * 0.035 * sin(time * 5.236) - (-0.2 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0 + (0.2 - (0)) * (i + 1) / n",
+  ]
+  scale = "0.0667"
+
+  [[models.instances]]   # left leg, forward: shin down to the foot
+  count = 8
+  position = [
+    "-0.2 + 0.5 * 0.035 * sin(time * 5.236) + (-0.2 - (-0.2 + 0.5 * 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (0 - (0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0.2 + (0.1333 - (0.2)) * (i + 1) / n",
+  ]
+  scale = "0.0667 + (0.0333 - (0.0667)) * (i + 1) / n"
+
+  [[models.instances]]   # right leg, back: hip
+  position = ["0.2 + 0.035 * sin(time * 5.236)", "0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.0667
+
+  [[models.instances]]   # right leg, back: thigh down to the knee
+  count = 7
+  position = [
+    "0.2 + 0.035 * sin(time * 5.236) + (0.2 + 0.5 * 0.035 * sin(time * 5.236) - (0.2 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (0.9667 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0 + (-0.0667 - (0)) * (i + 1) / n",
+  ]
+  scale = "0.0667"
+
+  [[models.instances]]   # right leg, back: shin down to the foot
+  count = 8
+  position = [
+    "0.2 + 0.5 * 0.035 * sin(time * 5.236) + (0.2 - (0.2 + 0.5 * 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (0 - (0.5333 + 0.5 * -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "-0.0667 + (-0.1333 - (-0.0667)) * (i + 1) / n",
+  ]
+  scale = "0.0667 + (0.0333 - (0.0667)) * (i + 1) / n"
+
+  [[models.instances]]   # right arm: shoulder
+  position = ["0.2333 + 0.035 * sin(time * 5.236)", "1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.0667
+
+  [[models.instances]]   # right arm: out to the elbow
+  count = 7
+  position = [
+    "0.2333 + 0.035 * sin(time * 5.236) + (0.4 + 0.035 * sin(time * 5.236) - (0.2333 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0 + (0.0667 - (0)) * (i + 1) / n",
+  ]
+  scale = "0.0667"
+
+  [[models.instances]]   # right arm: forward to the hand
+  count = 8
+  position = [
+    "0.4 + 0.035 * sin(time * 5.236) + ((0.6 + 0.04 * cos(time * 10.472)) - (0.4 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (1.4 + 0.05 * sin(time * 10.472) + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0.0667 + (0.36 - (0.0667)) * (i + 1) / n",
+  ]
+  scale = "0.0667 + (0.0333 - (0.0667)) * (i + 1) / n"
+
+  [[models.instances]]   # left arm: shoulder
+  position = ["-0.2333 + 0.035 * sin(time * 5.236)", "1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.0667
+
+  [[models.instances]]   # left arm: out to the elbow
+  count = 7
+  position = [
+    "-0.2333 + 0.035 * sin(time * 5.236) + (-0.4 + 0.035 * sin(time * 5.236) - (-0.2333 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (1.7 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0 + (0.0667 - (0)) * (i + 1) / n",
+  ]
+  scale = "0.0667"
+
+  [[models.instances]]   # left arm: forward to the hand
+  count = 8
+  position = [
+    "-0.4 + 0.035 * sin(time * 5.236) + (-(0.6 + 0.04 * cos(time * 10.472)) - (-0.4 + 0.035 * sin(time * 5.236))) * (i + 1) / n",
+    "1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (1.4 + 0.05 * sin(time * 10.472) + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (1.4 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0.0667 + (0.36 - (0.0667)) * (i + 1) / n",
+  ]
+  scale = "0.0667 + (0.0333 - (0.0667)) * (i + 1) / n"
+
+  [[models.passes]]   # cast a shadow on the floor
+  vertex = "shaders/juggler/shadow.vert"
+  fragment = "shaders/juggler/shadow.frag"
+
+[[models]]
+name = "torso"
+builtin = "sphere"
+fragment = "shaders/juggler/shirt.frag"
+
+  [[models.instances]]   # chest
+  position = ["0 + 0.035 * sin(time * 5.236)", "1.5333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0]
+  scale = 0.2667
+
+  [[models.instances]]   # tapering down to the hips
+  count = 6
+  position = [
+    "0 + 0.035 * sin(time * 5.236)",
+    "1.5333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) + (1.1 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)) - (1.5333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472)))) * (i + 1) / n",
+    "0",
+  ]
+  scale = "0.2667 + (0.2 - (0.2667)) * (i + 1) / n"
+
+  [[models.passes]]   # cast a shadow on the floor
+  vertex = "shaders/juggler/shadow.vert"
+  fragment = "shaders/juggler/shadow.frag"
+
+[[models]]
+name = "hair"
+builtin = "sphere"
+fragment = "shaders/juggler/dark.frag"
+
+  [[models.instances]]   # a dark sphere just behind the head: only its back shows
+  position = ["0 + 0.035 * sin(time * 5.236)", "2.04 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", -0.0067]
+  scale = 0.1667
+
+  [[models.passes]]   # cast a shadow on the floor
+  vertex = "shaders/juggler/shadow.vert"
+  fragment = "shaders/juggler/shadow.frag"
+
+[[models]]
+name = "eyes"
+builtin = "sphere"
+fragment = "shaders/juggler/eyes.frag"
+
+  [[models.instances]]   # left eye
+  position = ["-0.0667 + 0.035 * sin(time * 5.236)", "2.0333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0.1333]
+  scale = 0.05
+
+  [[models.instances]]   # right eye
+  position = ["0.0667 + 0.035 * sin(time * 5.236)", "2.0333 + -0.025 * (0.5 + 0.5 * cos(time * 10.472))", 0.1333]
+  scale = 0.05
+
+  [[models.passes]]   # cast a shadow on the floor
+  vertex = "shaders/juggler/shadow.vert"
+  fragment = "shaders/juggler/shadow.frag"

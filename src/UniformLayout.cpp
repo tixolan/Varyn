@@ -1,5 +1,6 @@
 #include "UniformLayout.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <sstream>
 
@@ -44,6 +45,8 @@ uint32_t sizeOf(GlslType type) {
     return 0;
 }
 
+constexpr uint32_t kArrayStride = 16;  // std140 array element stride for float..vec4
+
 uint32_t alignUp(uint32_t value, uint32_t alignment) { return (value + alignment - 1) / alignment * alignment; }
 
 GlslType vectorType(size_t components) {
@@ -70,16 +73,23 @@ UniformLayout::UniformLayout(const std::vector<UniformConfig>& userUniforms) {
 
     firstUserField_ = fields_.size();
     for (const UniformConfig& uniform : userUniforms) {
-        add(uniform.name, vectorType(uniform.components.size()));
+        add(uniform.name, vectorType(uniform.components.size()), uint32_t(uniform.count));
     }
 
     size_ = alignUp(size_, 16);  // a std140 block is padded to a multiple of 16 bytes
 }
 
-void UniformLayout::add(std::string name, GlslType type) {
-    uint32_t offset = alignUp(size_, alignmentOf(type));
-    fields_.push_back({std::move(name), type, offset});
-    size_ = offset + sizeOf(type);
+void UniformLayout::add(std::string name, GlslType type, uint32_t count) {
+    if (count == 0) {
+        uint32_t offset = alignUp(size_, alignmentOf(type));
+        fields_.push_back({std::move(name), type, offset});
+        size_ = offset + sizeOf(type);
+        return;
+    }
+    // std140 arrays: every element starts on a 16 byte boundary.
+    uint32_t offset = alignUp(size_, 16);
+    fields_.push_back({std::move(name), type, offset, count});
+    size_ = offset + kArrayStride * count;
 }
 
 void UniformLayout::write(std::byte* destination, const FrameUniforms& frame,
@@ -99,11 +109,18 @@ void UniformLayout::write(std::byte* destination, const FrameUniforms& frame,
 
     for (size_t i = 0; i < userUniforms.size(); ++i) {
         const UniformConfig& uniform = userUniforms[i];
-        float values[4] = {};
-        for (size_t c = 0; c < uniform.components.size(); ++c) {
-            values[c] = float(uniform.components[c].evaluate(context));
+        const int elements = std::max(uniform.count, 1);
+        ExpressionContext elementContext = context;
+        elementContext.count = elements;
+        for (int element = 0; element < elements; ++element) {
+            elementContext.index = element;
+            float values[4] = {};
+            for (size_t c = 0; c < uniform.components.size(); ++c) {
+                values[c] = float(uniform.components[c].evaluate(elementContext));
+            }
+            std::memcpy(destination + fields_[firstUserField_ + i].offset + size_t(element) * kArrayStride, values,
+                        uniform.components.size() * sizeof(float));
         }
-        std::memcpy(destination + fields_[firstUserField_ + i].offset, values, uniform.components.size() * sizeof(float));
     }
 }
 
@@ -116,7 +133,9 @@ std::string generateShaderHeader(const UniformLayout& layout, const std::vector<
     glsl << "// Per-frame values. Built-ins first, then everything in [uniforms].\n"
          << "layout(set = 0, binding = " << kUniformBufferBinding << ", std140) uniform VarynFrame {\n";
     for (const UniformField& field : layout.fields()) {
-        glsl << "    " << glslName(field.type) << " " << field.name << ";\n";
+        glsl << "    " << glslName(field.type) << " " << field.name;
+        if (field.count > 0) glsl << "[" << field.count << "]";
+        glsl << ";\n";
     }
     glsl << "};\n\n";
 
@@ -125,7 +144,21 @@ std::string generateShaderHeader(const UniformLayout& layout, const std::vector<
             "    mat4 modelMatrix;\n"
             "    int modelIndex;     // position of the model in the config file\n"
             "    int instanceIndex;  // index of the instance being drawn\n"
+            "    float metallic;     // the model's `metallic` option, 0..1\n"
+            "    int environmentLayer;  // this model's environment map, -1 if it has none\n"
             "};\n\n";
+
+    glsl << "// The scene as seen from the centre of each metallic model, captured every\n"
+            "// frame without that model. Use sampleEnvironment() rather than this.\n"
+         << "layout(set = 0, binding = " << kEnvironmentBinding << ") uniform samplerCubeArray varynEnvironment;\n\n"
+         << "#ifdef VARYN_FRAGMENT_SHADER\n"
+            "// What the model would reflect in world space `direction`. Black when the\n"
+            "// model has no `metallic` option.\n"
+            "vec3 sampleEnvironment(vec3 direction) {\n"
+            "    if (environmentLayer < 0) return vec3(0.0);\n"
+            "    return texture(varynEnvironment, vec4(direction, float(environmentLayer))).rgb;\n"
+            "}\n"
+            "#endif\n\n";
 
     if (!textures.empty()) glsl << "// Textures from [[textures]].\n";
     for (size_t i = 0; i < textures.size(); ++i) {

@@ -1,0 +1,130 @@
+# =============================================================================
+# Varyn sample configuration: Mandelbrot floor
+#
+# The same scene as varyn.toml, but the floor draws a zooming Mandelbrot
+# fractal (shaders/mandelbrot.frag) instead of a checkerboard.
+#
+#   ./build/varyn examples/mandelbrot.toml
+#
+# Edit this file, any shader or any module while Varyn runs: it reloads on
+# save. Compilation errors are printed and the last working version stays on
+# screen.
+#
+# Every number below can also be written as a string expression. Expressions
+# can use:
+#   time (or t), dt, frame      seconds, seconds since last frame, frame count
+#   i, n                        instance index / count (inside [[models.instances]])
+#   pi, tau, e
+#   sin cos tan asin acos atan atan2 sqrt abs floor ceil fract round sign
+#   exp log pow min max mod step clamp mix smoothstep radians degrees
+#   + - * / % ^ and parentheses
+#
+# Paths are relative to this file.
+# =============================================================================
+
+[window]
+title = "Varyn sample - Mandelbrot"
+width = 1280
+height = 720
+vsync = false
+clear_color = [0.02, 0.02, 0.03, 1.0]
+
+# Default shaders for every model. Each model may override them.
+# include_dirs is where `#include "module.glsl"` looks for modules.
+# `#include <varyn.glsl>` is generated from this file (see --print-header).
+[shaders]
+vertex = "shaders/scene.vert"
+fragment = "shaders/scene.frag"
+include_dirs = ["modules"]
+
+# The camera slowly orbits the scene and gently "breathes" its field of view.
+[camera]
+position = ["6.5 * sin(time * 0.25)", "2.2 + 0.6 * sin(time * 0.4)", "6.5 * cos(time * 0.25)"]
+target = [0.0, 0.3, 0.0]
+up = [0.0, 1.0, 0.0]
+fov = "50 + 4 * sin(time * 0.6)"   # vertical, degrees
+near = 0.1
+far = 100.0
+
+# Custom uniforms: 1 value -> float, 2 -> vec2, 3 -> vec3, 4 -> vec4.
+# They are available in shaders under the same name.
+[uniforms]
+lightDirection = [0.5, 1.0, "0.8 * cos(time * 0.5)"]
+pulse = "0.5 + 0.5 * sin(time * 3)"
+tint = [1.0, 0.85, 0.75]
+
+# Where the floor fractal looks (the Seahorse Valley) and how far it is
+# zoomed in: the view breathes between scale 1 and about 1/1100 every ~40 s.
+mandelbrotCenter = [-0.743643887, 0.131825904]
+mandelbrotZoom = "exp(-7 * (0.5 - 0.5 * cos(time * 0.15)))"
+
+# -----------------------------------------------------------------------------
+# Models. Each one is either an .obj file (`path`) or a `builtin` mesh:
+# quad, cube or sphere. Every [[models.instances]] entry draws the model once,
+# or `count` times with `i` going from 0 to count - 1.
+#
+#   position = [x, y, z]
+#   rotation = [x, y, z]   degrees, applied X, then Y, then Z
+#   scale    = [x, y, z]   or a single value
+#
+# `metallic` (0.0 to 1.0, per model) makes a model reflect the scene. Every
+# instance of a metallic model costs six extra renders of the scene per frame.
+# -----------------------------------------------------------------------------
+
+# A fullscreen backdrop with its own shaders.
+[[models]]
+name = "background"
+builtin = "quad"
+vertex = "shaders/fullscreen.vert"
+fragment = "shaders/background.frag"
+
+[[models]]
+name = "floor"
+builtin = "quad"
+fragment = "shaders/mandelbrot.frag"
+
+  [[models.instances]]
+  position = [0.0, -1.0, 0.0]
+  rotation = [-90.0, 0.0, 0.0]
+  scale = 6.0
+
+# The torus has no normals in the file; Varyn computes them.
+[[models]]
+name = "torus"
+path = "models/torus.obj"
+metallic = 1.0
+
+  [[models.instances]]
+  position = [0.0, "0.4 + 0.2 * sin(time * 2)", 0.0]
+  rotation = ["time * 40", "time * 25", 0.0]
+  scale = 0.9
+
+# A ring of 12 cubes generated from a single entry.
+[[models]]
+name = "ring"
+builtin = "cube"
+metallic = "1.0"   # expressions work too, per instance
+
+  [[models.instances]]
+  count = 12
+  position = [
+    "3.2 * cos(i / n * tau + time * 0.5)",
+    "-0.55 + 0.25 * sin(time * 2 + i)",
+    "3.2 * sin(i / n * tau + time * 0.5)",
+  ]
+  rotation = [0.0, "-degrees(i / n * tau + time * 0.5)", "time * 90 + i * 30"]
+  scale = 0.25
+
+# Two spheres placed by hand.
+[[models]]
+name = "moons"
+builtin = "sphere"
+metallic = 0.8
+
+  [[models.instances]]
+  position = [-1.8, "0.6 + 0.3 * sin(time * 1.3)", 0.0]
+  scale = 0.35
+
+  [[models.instances]]
+  position = [1.8, "0.6 + 0.3 * cos(time * 1.3)", 0.0]
+  scale = "0.35 + 0.05 * sin(time * 4)"
